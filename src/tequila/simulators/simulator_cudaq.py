@@ -1,4 +1,6 @@
 import cudaq
+from cudaq import spin
+
 import qulacs
 import numbers, numpy
 import warnings
@@ -23,7 +25,7 @@ class TequilaCudaqException(TequilaException):
 
 class BackendCircuitCudaq(BackendCircuit):
     """
-    Class representing circuits compiled to qulacs.
+    Class representing circuits compiled to cudaq (cuda-quantum of NVIDIA).
     See BackendCircuit for documentation of features and methods inherited therefrom
 
     Attributes
@@ -46,23 +48,23 @@ class BackendCircuitCudaq(BackendCircuit):
     """
 
     compiler_arguments = {
-        "trotterized": True,
-        "swap": False,
-        "multitarget": True,
-        "controlled_rotation": True, # needed for gates depending on variables
-        "generalized_rotation": True,
+        "trotterized": False,
+        "swap": True,
+        "multitarget": False,
+        "controlled_rotation": False, # needed for gates depending on variables
+        "generalized_rotation": False,
         "exponential_pauli": False,
         "controlled_exponential_pauli": True,
         "phase": True,
-        "power": True,
-        "hadamard_power": True,
-        "controlled_power": True,
-        "controlled_phase": True,
+        "power": False,
+        "hadamard_power": False,
+        "controlled_power": False,
+        "controlled_phase": False,
         "toffoli": False,
-        "phase_to_z": True,
+        "phase_to_z": False,
         "cc_max": False
     }
-
+    # try MSB, if doesnt work try LSB 
     numbering = BitNumbering.LSB
 
     def __init__(self, abstract_circuit, noise=None, *args, **kwargs):
@@ -77,23 +79,34 @@ class BackendCircuitCudaq(BackendCircuit):
         args
         kwargs
         """
+
+
+        # rotations are instantiated like this: 
+        # doesnt work 
         self.op_lookup = {
-            'I': qulacs.gate.Identity,
-            'X': qulacs.gate.X,
-            'Y': qulacs.gate.Y,
-            'Z': qulacs.gate.Z,
-            'H': qulacs.gate.H,
-            'Rx': (lambda c: c.add_parametric_RX_gate, qulacs.gate.RX),
-            'Ry': (lambda c: c.add_parametric_RY_gate, qulacs.gate.RY),
-            'Rz': (lambda c: c.add_parametric_RZ_gate, qulacs.gate.RZ),
-            'SWAP': qulacs.gate.SWAP,
-            'Measure': qulacs.gate.Measurement,
+            'I': None,
+            'X': 1,
+            'Y': 2,
+            'Z': 3,
+            'H': 4,
+            'Rx': 5,
+            'Ry': 6,
+            'Rz': 7,
+            'SWAP': 8,
+            'Measure': 9,
             'Exp-Pauli': None
         }
+
+        # instantiate a cudaq circuit as a list
+        self.circuit = self.initialize_circuit()
+
         self.measurements = None
         self.variables = []
         super().__init__(abstract_circuit=abstract_circuit, noise=noise, *args, **kwargs)
         self.has_noise=False
+
+
+        # noise part is still not implemented for cudaq 
         if noise is not None:
 
             warnings.warn("Warning: noise in qulacs module will be dropped. Currently only works for qulacs version 0.5 or lower", TequilaWarning)
@@ -112,25 +125,6 @@ class BackendCircuitCudaq(BackendCircuit):
 
             self.circuit=self.add_noise_to_circuit(noise)
 
-    def initialize_state(self, n_qubits:int=None) -> qulacs.QuantumState:
-        if n_qubits is None:
-            n_qubits = self.n_qubits
-        return qulacs.QuantumState(n_qubits)
-
-    def update_variables(self, variables):
-        """
-        set new variable values for the circuit.
-        Parameters
-        ----------
-        variables: dict:
-            the variables to supply to the circuit.
-
-        Returns
-        -------
-        None
-        """
-        for k, angle in enumerate(self.variables):
-            self.circuit.set_parameter(k, angle(variables))
 
     def do_simulate(self, variables, initial_state, *args, **kwargs):
         """
@@ -150,13 +144,7 @@ class BackendCircuitCudaq(BackendCircuit):
         QubitWaveFunction:
             QubitWaveFunction representing result of the simulation.
         """
-        state = self.initialize_state(self.n_qubits)
-        lsb = BitStringLSB.from_int(initial_state, nbits=self.n_qubits)
-        state.set_computational_basis(BitString.from_binary(lsb.binary).integer)
-        self.circuit.update_quantum_state(state)
-
-        wfn = QubitWaveFunction.from_array(arr=state.get_vector(), numbering=self.numbering)
-        return wfn
+        pass
 
     def convert_measurements(self, backend_result, target_qubits=None) -> QubitWaveFunction:
         """
@@ -220,18 +208,6 @@ class BackendCircuitCudaq(BackendCircuit):
         sampled = state.sampling(samples)
         return self.convert_measurements(backend_result=sampled, target_qubits=self.measurements)
 
-    def no_translation(self, abstract_circuit):
-        """
-        Todo: what is this for?
-        Parameters
-        ----------
-        abstract_circuit
-
-        Returns
-        -------
-
-        """
-        return False
 
     def initialize_circuit(self, *args, **kwargs):
         """
@@ -243,38 +219,11 @@ class BackendCircuitCudaq(BackendCircuit):
 
         Returns
         -------
-        qulacs.ParametricQuantumCircuit
+        an empty list, since the circuits in cudaq has to be created 
+        based on a list of gates within a kernel 
         """
-        return qulacs.ParametricQuantumCircuit(self.n_qubits)
+        return []
 
-    def add_exponential_pauli_gate(self, gate, circuit, variables, *args, **kwargs):
-        """
-        Add a native qulacs Exponential Pauli gate to a circuit.
-        Parameters
-        ----------
-        gate: ExpPauliGateImpl:
-            the gate to add
-        circuit:
-            the qulacs circuit, to which the gate is to be added.
-        variables:
-            dict containing values of the parameters appearing in the pauli gate.
-        args
-        kwargs
-
-        Returns
-        -------
-        None
-        """
-        assert not gate.is_controlled()
-        convert = {'x': 1, 'y': 2, 'z': 3}
-        pind = [convert[x.lower()] for x in gate.paulistring.values()]
-        qind = [self.qubit(x) for x in gate.paulistring.keys()]
-        if len(gate.extract_variables()) > 0:
-            self.variables.append(-gate.parameter * gate.paulistring.coeff)
-            circuit.add_parametric_multi_Pauli_rotation_gate(qind, pind,
-                                                             -gate.parameter(variables) * gate.paulistring.coeff)
-        else:
-            circuit.add_multi_Pauli_rotation_gate(qind, pind, -gate.parameter(variables) * gate.paulistring.coeff)
 
     def add_parametrized_gate(self, gate, circuit, variables, *args, **kwargs):
         """
@@ -294,26 +243,9 @@ class BackendCircuitCudaq(BackendCircuit):
         -------
         None
         """
-        op = self.op_lookup[gate.name]
-        if gate.name == 'Exp-Pauli':
-            self.add_exponential_pauli_gate(gate, circuit, variables)
-            return
-        else:
-            if len(gate.extract_variables()) > 0:
-                op = op[0]
-                self.variables.append(-gate.parameter)
-                op(circuit)(self.qubit(gate.target[0]), -gate.parameter(variables=variables))
-                if gate.is_controlled():
-                    raise TequilaQulacsException("Gates which depend on variables can not be controlled! Gate was:\n{}".format(gate))
-                return
-            else:
-                op = op[1]
-                qulacs_gate = op(self.qubit(gate.target[0]), -gate.parameter(variables=variables))
-        if gate.is_controlled():
-            qulacs_gate = qulacs.gate.to_matrix_gate(qulacs_gate)
-            for c in gate.control:
-                qulacs_gate.add_control_qubit(self.qubit(c), 1)
-        circuit.add_gate(qulacs_gate)
+
+        # has to be implemented individually for cudaq
+        pass
 
     def add_basic_gate(self, gate, circuit, *args, **kwargs):
         """
@@ -331,14 +263,36 @@ class BackendCircuitCudaq(BackendCircuit):
         -------
         None
         """
-        op = self.op_lookup[gate.name]
-        qulacs_gate = op(*[self.qubit(t) for t in gate.target])
-        if gate.is_controlled():
-            qulacs_gate = qulacs.gate.to_matrix_gate(qulacs_gate)
-            for c in gate.control:
-                qulacs_gate.add_control_qubit(self.qubit(c), 1)
+        gate_encoding = self.op_lookup[gate.name]
 
-        circuit.add_gate(qulacs_gate)
+
+        # target qubits as a list 
+        target_qubits = [self.qubit(t) for t in gate.target]
+
+        print("gate enc ", gate_encoding, " gate name", gate.name)
+        print("target qub from add basic gate ", target_qubits)
+        
+        conrtol_qubits = []
+
+        if gate.is_controlled():
+            for control in gate.control:
+                conrtol_qubits.append(self.qubit(control))
+
+
+        # print("target qubits ", target_qubits)
+        # print("control qubits ", conrtol_qubits)
+
+        # print(f"op is {gate.name} = {gate_encoding} with target {target_qubits} and conrtol {conrtol_qubits}")
+
+        # a tupel: (gate_code, target, control)
+
+        gate_to_apply = (gate_encoding, target_qubits, conrtol_qubits)
+        # print("gate to apply", gate_to_apply)
+        # print("intermediate circuit ", circuit)
+
+        circuit.append(gate_to_apply)
+
+
 
     def add_measurement(self, circuit, target_qubits, *args, **kwargs):
         """
@@ -356,75 +310,17 @@ class BackendCircuitCudaq(BackendCircuit):
         -------
         None
         """
-        self.measurements = sorted(target_qubits)
-        return circuit
+        pass
 
 
-    def add_noise_to_circuit(self,noise_model):
-        """
-        Apply noise from a NoiseModel to a circuit.
-        Parameters
-        ----------
-        noise_model: NoiseModel:
-            the noisemodel to apply to the circuit.
-
-        Returns
-        -------
-        qulacs.ParametrizedQuantumCircuit:
-            self.circuit, with noise added on.
-        """
-        c=self.circuit
-        n=noise_model
-        g_count=c.get_gate_count()
-        new=self.initialize_circuit()
-        for i in range(g_count):
-            g=c.get_gate(i)
-            new.add_gate(g)
-            qubits=g.get_target_index_list() + g.get_control_index_list()
-            for noise in n.noises:
-                if len(qubits) == noise.level:
-                    for j,channel in enumerate(self.noise_lookup[noise.name]):
-                        for q in qubits:
-                            chan=channel(q,noise.probs[j])
-                            new.add_gate(chan)
-        return new
-
-    def optimize_circuit(self, circuit, max_block_size: int = 4, silent: bool = True, *args, **kwargs):
-        """
-        reduce circuit depth using the native qulacs optimizer.
-        Parameters
-        ----------
-        circuit
-        max_block_size: int: Default = 4:
-            the maximum block size for use by the qulacs internal optimizer.
-        silent: bool:
-            whether or not to print the resullt of having optimized.
-        args
-        kwargs
-
-        Returns
-        -------
-        qulacs.QuantumCircuit:
-            optimized qulacs circuit.
-
-        """
-        old = circuit.calculate_depth()
-        opt = qulacs.circuit.QuantumCircuitOptimizer()
-        opt.optimize(circuit, max_block_size)
-        if not silent:
-            print("qulacs: optimized circuit depth from {} to {} with max_block_size {}".format(old,
-                                                                                                circuit.calculate_depth(),
-                                                                                                max_block_size))
-        return circuit
-
-class BackendExpectationValueQulacs(BackendExpectationValue):
+class BackendExpectationValueCudaq(BackendExpectationValue):
     """
-    Class representing Expectation Values compiled for Qulacs.
+    Class representing Expectation Values compiled for Cudaq.
 
-    Ovverrides some methods of BackendExpectationValue, which should be seen for details.
+    Overrides some methods of BackendExpectationValue, which should be seen for details.
     """
     use_mapping = True
-    BackendCircuitType = BackendCircuitQulacs
+    BackendCircuitType = BackendCircuitCudaq
 
     def simulate(self, variables, *args, **kwargs) -> numpy.array:
         """
@@ -449,17 +345,89 @@ class BackendExpectationValueQulacs(BackendExpectationValue):
         elif isinstance(self.H, numbers.Number):
             return numpy.asarray[self.H]
 
-        self.U.update_variables(variables)
-        state = self.U.initialize_state(self.n_qubits)
-        self.U.circuit.update_quantum_state(state)
-        result = []
-        for H in self.H:
-            if isinstance(H, numbers.Number):
-                result.append(H) # those are accumulated unit strings, e.g 0.1*X(3) in wfn on qubits 0,1
-            else:
-                result.append(H.get_expectation_value(state))
+        # a tupel: (gate_code, target, control)
+        # gate_to_apply = (gate_encoding, target_qubits, conrtol_qubits)
 
-        return numpy.asarray(result)
+        print("self cir ", self.U.circuit)
+
+        for g, t, c in self.U.circuit:
+            print(g,t,c)
+
+        print("amt of qbits ", self.U.n_qubits)
+
+        # prepare parameters for usage in kernal since "self. " access doesnt work within kernels  
+        number_of_qubits = self.n_qubits
+
+        # decompose gate_encodings, targets and controls from circuit
+        gate_encodings = []
+        target_qubits = []
+        control_qubits = []
+
+        for tuple_in_circuit in self.U.circuit:
+            gate_encodings.append(tuple_in_circuit[0])
+            target_qubits.append(tuple_in_circuit[1])
+            control_qubits.append(tuple_in_circuit[2])
+
+
+        # ensure there is only one target per gate encoding 
+        for target in target_qubits:
+            if len(target) != 1:
+                TequilaCudaqException(" each gate should have exactly one target ")
+
+        # convert elements of target qubits into the indices, to which they should apply, and not a list of lists
+        target_qubits = [x[0] if len(x) == 1 else x for x in target_qubits]
+
+        # constant - indicates kernel if circuit has conrtol qubits 
+        is_controlled_parent_scope = 0
+
+        print("g " , gate_encodings)
+        print("tr ", target_qubits)
+        print("cq ", control_qubits)
+
+        """ as for now without control qubits """
+        @cudaq.kernel
+        def state_modifier():
+
+            is_controlled = is_controlled_parent_scope
+
+            # create an empty state with given number of qubits
+            state = cudaq.qvector(number_of_qubits)
+
+            # if no controlled qubits - apply basic gates with their targets 
+            if is_controlled == 0:
+                # ensure each gate has exactly one control 
+                if len(gate_encodings) == len(target_qubits):
+                    # iterate over both lists with their indices (since zip is forbidden in cudaq-kernels)
+                    for index in range(len(gate_encodings)):
+                        if gate_encodings[index] == 1:
+                            x(state[target_qubits[index]])
+                        elif gate_encodings[index] == 2:
+                            y(state[target_qubits[index]])
+                        elif gate_encodings[index] == 3:
+                            z(state[target_qubits[index]])
+
+            # if there are some controlls             
+            else:
+                # TODO implement behaviour when controlled - trickier than initially assumed 
+                pass
+
+
+        # array containing results of simulation 
+        resulting_expectation_values = []
+
+        # go over all given hamiltonians 
+        for hamiltonian in self.H:
+            # compute expectation value between hamiltonian and state 
+            expectation_value = cudaq.observe(state_modifier, hamiltonian).expectation()
+            print("one before")
+            print(expectation_value)
+            resulting_expectation_values.append(expectation_value)
+
+        print("res exvals ",resulting_expectation_values)
+
+        return numpy.asarray(resulting_expectation_values)
+    
+
 
     def initialize_hamiltonian(self, hamiltonians):
         """
@@ -476,21 +444,39 @@ class BackendExpectationValueQulacs(BackendExpectationValue):
 
         """
 
-        # map the reduced operators to the potentially smaller qubit system
-        qubit_map = {}
-        for i,q in enumerate(self.U.abstract_circuit.qubits):
-            qubit_map[q] = i
 
-        result = []
-        for H in hamiltonians:
-            qulacs_H = qulacs.Observable(self.n_qubits)
-            for ps in H.paulistrings:
-                string = ""
-                for k, v in ps.items():
-                    string += v.upper() + " " + str(qubit_map[k])
-                qulacs_H.add_operator(ps.coeff, string)
-            result.append(qulacs_H)
-        return result
+        """ 
+        # get information for spins 
+        print(" \n \n")
+        for h in hamiltonians:
+            print(h, h.paulistrings)
+            print(type(h), type(h.paulistrings))
+            for pauli in h.paulistrings:
+                print(pauli, type(pauli))
+                for a, b in pauli.items():
+                    print(f"{a} bit {b} gate {pauli._coeff} coeff")
+        """ 
+
+        list_of_initialized_hamiltonians = []
+        hamiltonian_as_spin = 0
+        # assemble hamiltonian with cudaq
+        for h in hamiltonians:
+            for paulistring in h.paulistrings:
+                # get qubit on which the gate operate, gate and coefficient
+                for qubit, gate in paulistring.items():
+                    if gate == 'X':
+                        hamiltonian_as_spin += paulistring._coeff * spin.x(qubit)
+                    elif gate == 'Y':
+                        hamiltonian_as_spin += paulistring._coeff * spin.y(qubit)
+                    elif gate == 'Z':
+                        hamiltonian_as_spin += paulistring._coeff * spin.z(qubit)
+            list_of_initialized_hamiltonians.append(hamiltonian_as_spin)
+        
+        # show hamils 
+        for index, h in enumerate(list_of_initialized_hamiltonians):
+            print(f"hamil number {index + 1} is {h}")
+
+        return list_of_initialized_hamiltonians
 
     def sample(self, variables, samples, *args, **kwargs) -> numpy.array:
         """
