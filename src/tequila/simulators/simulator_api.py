@@ -10,7 +10,7 @@ from tequila.utils.exceptions import TequilaException, TequilaWarning
 from tequila.simulators.simulator_base import BackendCircuit, BackendExpectationValue
 from tequila.circuit.noise import NoiseModel
 
-SUPPORTED_BACKENDS = ["qulacs_gpu", "qulacs",'qibo', "qiskit", "cirq", "pyquil", "symbolic", "qlm"]
+SUPPORTED_BACKENDS = ["qulacs_gpu", "qulacs",'qibo', "qiskit", "cirq", "pyquil", "symbolic", "qlm", "cudaq"]
 SUPPORTED_NOISE_BACKENDS = ["qiskit", 'cirq', 'pyquil'] # qulacs removed in v.1.9
 BackendTypes = namedtuple('BackendTypes', 'CircType ExpValueType')
 INSTALLED_SIMULATORS = {}
@@ -28,6 +28,36 @@ if typing.TYPE_CHECKING:
 Check which simulators are installed
 We are distinguishing two classes of simulators: Samplers and full wavefunction simulators
 """
+
+
+HAS_CUDAQ = True
+# try:
+# pkg_resources.require("cudaq")
+# import cudaq
+from tequila.simulators.simulator_cudaq import BackendCircuitCudaq, BackendExpectationValueCudaq
+
+HAS_CUDAQ = True
+INSTALLED_SIMULATORS["cudaq"] = BackendTypes(CircType=BackendCircuitCudaq,
+                                                ExpValueType=BackendExpectationValueCudaq)
+INSTALLED_SAMPLERS["cudaq"] = BackendTypes(CircType=BackendCircuitCudaq,
+                                            ExpValueType=BackendExpectationValueCudaq)
+INSTALLED_NOISE_SAMPLERS["cudaq"] = BackendTypes(CircType=BackendCircuitCudaq,
+                                                      ExpValueType=BackendExpectationValueCudaq)
+#except (ImportError, DistributionNotFound):
+    # HAS_CUDAQ = False
+
+print(SUPPORTED_BACKENDS)
+
+from tequila.simulators.simulator_qulacs import BackendCircuitQulacs
+
+# war zum testen kann weg 
+# print(dir(BackendCircuitQulacs))
+# print(dir(BackendCircuitCudaq))
+
+# print(hasattr(BackendCircuitQulacs, 'qubit_map'))
+# print(hasattr(BackendCircuitCudaq, 'qubit_map'))
+
+
 
 
 HAS_QISKIT = True
